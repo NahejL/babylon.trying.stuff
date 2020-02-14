@@ -1,0 +1,270 @@
+<meta http-equiv="Content-Type" content="text/html;charset=UTF-8">
+<style>
+  html, body, canvas{
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+  }
+</style>
+<canvas id="c"></canvas>
+<script src="https://preview.babylonjs.com/babylon.js"></script>
+<script src="https://preview.babylonjs.com/gui/babylon.gui.min.js"></script>
+<!--<script src="https://preview.babylonjs.com/cannon.js"></script>
+<script src="https://www.babylonjs.com/hand.minified-1.2.js"></script>
+<script src="https://preview.babylonjs.com/oimo.js"></script>-->
+<script>
+  const { Vector3 } = BABYLON
+
+  const state = {
+    earth: {
+      gravity: () => {
+        return state.G * state.m / Math.pow(state.ship.altitude, 2)
+      },// m/s^2
+      r: 6371000,// m
+      m: 5.972 * 10e24,// kg
+    },
+    ship: {
+      altitude: 0
+    },
+    G: 6.67408 * 10e-11, // m^3 kg^-1 s^-2
+    keyboard: {},
+    onDown: new BABYLON.Observable()
+  }
+
+  const babe = (() => {
+    const c = document.getElementById('c')
+    const engin = new BABYLON.Engine(c, true)
+    c.focus()
+    return engin
+  })()
+  
+  const scene =  ((engin, clearColor, ambientColor) => {
+    const scene = new BABYLON.Scene(engin)
+
+    scene.clearColor = clearColor
+    
+    scene.actionManager = ((scene) => {
+      const manager = new BABYLON.ActionManager(scene)
+      
+      manager.registerAction(new BABYLON.ExecuteCodeAction(
+        BABYLON.ActionManager.OnKeyUpTrigger,
+        e => {
+          state.keyboard[e.sourceEvent.key] = false
+        }
+      ))
+      manager.registerAction(new BABYLON.ExecuteCodeAction(
+        BABYLON.ActionManager.OnKeyDownTrigger,
+        e => {
+          state.keyboard[e.sourceEvent.key] = true
+        }
+      ))
+
+      return manager
+    })(scene)
+    
+    scene.onBeforeRenderObservable.add(() => {
+      if(Object.values(state.keyboard).find(key => key)){
+        state.onDown.notifyObservers()
+      }
+    })
+
+    return scene
+  })(babe, new BABYLON.Color3(.1, .2, .3), new BABYLON.Color3(.9, .8, .7))
+
+  const sphere = ((name, scene, d, sub) => {
+    const sphere = BABYLON.Mesh.CreateSphere(name, d, sub, scene, false)
+
+    const material = new BABYLON.StandardMaterial(`m${name}`, scene)
+    material.wireframe = true
+
+    sphere.material = material
+    return sphere
+  })('s', scene, 10, 10)
+
+  const box = ((name, scene, size) => {
+    const box =  BABYLON.Mesh.CreateBox(name, size, scene, false)
+    const thrust = .001
+    var velocity = 0
+
+
+    box.position = new Vector3(0, 0, 10)
+    box.rotation = new Vector3(1, 2, 3)
+
+    state.onDown.add(() => {
+      if(state.keyboard['w']){
+        box.rotate(
+          new Vector3(0, -1, 0),
+          0.1,
+          BABYLON.Space.LOCAL
+        )
+        box.onChange.notifyObservers()
+      }
+      if(state.keyboard['s']){
+        box.rotate(
+          new Vector3(0, 1, 0),
+          0.1,
+          BABYLON.Space.LOCAL
+        )
+        box.onChange.notifyObservers()
+      }
+      if(state.keyboard['a']){
+        box.rotate(
+          new Vector3( 1, 0, 0),
+          0.1,
+          BABYLON.Space.LOCAL
+        )
+        box.onChange.notifyObservers()
+      }
+      if(state.keyboard['d']){
+        box.rotate(
+          new Vector3(-1, 0, 0),
+          0.1,
+          BABYLON.Space.LOCAL
+        )
+        box.onChange.notifyObservers()
+      }
+      if(state.keyboard[' ']){
+        velocity += thrust
+        if(velocity > .2) velocity = .2
+      }
+      if(state.keyboard['Shift']){
+        velocity -= thrust
+        if(velocity < 0) velocity = 0
+      }
+    })
+
+    scene.beforeRender = () => {
+      box.translate(new Vector3(0, 0, 1),
+          velocity,
+          BABYLON.Space.LOCAL
+        )
+        box.onChange.notifyObservers()
+    }
+
+    box.onChange = new BABYLON.Observable()
+
+    return box
+  })('b', scene, 1)
+
+  const camera = ((name, scene, x, y, z) => { 
+    const camera = new BABYLON.FollowCamera(
+      name,
+      new Vector3.Zero(),
+      scene
+    )
+    camera.radius = 20
+    camera.lockedTarget = box
+
+    box.onChange.add(() => {
+
+    })
+
+    return camera
+  })('c', scene, 0, 2, -20)
+
+  const particles = (() => {
+    const particles = new BABYLON.GPUParticleSystem('p', {
+      capacity: 200,
+      randomTextureSize: 2048
+    }, scene)
+
+    particles.noiseTexture = (()=> {
+      const texture = new BABYLON.NoiseProceduralTexture('t', 256, scene)
+    
+      texture.animationSpeedFactor = 5
+      texture.persistence = 2
+      texture.brightness =.5
+      texture.octaves = 2
+    
+      return texture
+    })()
+    particles.noiseStrength = new Vector3(0, 0, -10)
+    particles.particleTexture = new BABYLON.RawTexture(
+      new Uint8Array([128, 128, 128, 255]), 
+      1, 1, 
+      BABYLON.Engine.TEXTUREFORMAT_RGBA, 
+      scene,
+      false,
+      false,
+      BABYLON.Texture.TRILINEAR_SAMPLINGMODE,
+      BABYLON.Engine.TEXTURETYPE_UNSIGNED_INT
+    )
+    particles.emitter = box
+    particles.minLifeTime = 0.3
+    particles.maxLifeTime= 1.5
+    particles.minSize = .1
+    particles.maxSize = .15
+    particles.direction1 = new Vector3(0, 0, -1)
+    particles.direction2 = new Vector3(0, 0, -1)
+
+    particles.start()
+
+    return particles
+  })()
+
+  const d_light = ((name, scene, x, y, z) => {
+    const light = new BABYLON.DirectionalLight(
+      name, 
+      new BABYLON.Vector3(x, y, z), 
+      scene
+    )
+    return light
+  })('l', scene, -.5, -1, -.5)
+  
+  const h_light = (() => {
+    const light = new BABYLON.HemisphericLight('h', new Vector3(1, 2, 3), scene)
+    return light
+  })()
+
+  const gui = (() => {
+    const gui = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("i")
+    
+    //onPointerMoveObservable
+    const rect = (() => {
+      const rect = new BABYLON.GUI.Rectangle()
+      
+      rect.adaptWidthToChildren = true
+      rect.adaptHeightToChildren = true
+      rect.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT
+      rect.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP
+      rect.background = 'black'
+      rect.alpha = .5
+      rect.thickness = 0
+      gui.addControl(rect)
+
+      const text = (() => {
+        const text = new BABYLON.GUI.TextBlock()
+
+        text.width = '100px'
+        text.textWrapping = true
+        text.resizeToFit = true
+        text.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT
+        text.textVerticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP
+        text.text = 't'
+        text.color = "white"
+        text.fontSize = 12
+        rect.addControl(text)
+
+        return text
+      })()
+
+      return rect
+    })()
+  
+    return gui
+  })()
+
+  babe.runRenderLoop( () => {
+    scene.render()
+  })
+
+  window.addEventListener('resize', () => babe.resize())
+  window.addEventListener('keydown', e => {
+    if(e.keyCode === 68 && e.shiftKey){
+      scene.debugLayer.isVisible()
+      ? scene.debugLayer.hide()
+      : scene.debugLayer.show()
+    }
+  })
+</script>
